@@ -11,57 +11,75 @@ import google.generativeai as genai
 # 🔑 Configure Gemini API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# 🎨 Streamlit UI
-st.set_page_config(page_title="PDF Q&A Chatbot", page_icon="📄", layout="wide")
-st.title("📄 PDF Q&A Chatbot - Gemini 1.5 Flash")
+# 🎨 Streamlit UI Config
+st.set_page_config(page_title="📄 PDF Q&A Chatbot", page_icon="🤖", layout="wide")
 
-# Sidebar for file upload
+st.markdown(
+    """
+    <h2 style='text-align: center; color: #4CAF50;'>
+        📄 PDF Q&A Chatbot 
+    </h2>
+    <p style='text-align: center; color: gray;'>Upload a PDF and ask questions instantly!</p>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Sidebar
 with st.sidebar:
-    st.header("Upload your document")
-    file = st.file_uploader("Upload a PDF file", type="pdf")
+    st.header("📂 Upload Document")
+    file = st.file_uploader("Choose a PDF file", type="pdf")
+    st.markdown("---")
+
+
+# ✅ Use Session State to avoid rebuilding embeddings every time
+if "vector_store" not in st.session_state:
+    st.session_state.vector_store = None
 
 if file is not None:
-    # Extract text from PDF
-    pdf_reader = PdfReader(file)
-    text = ""
-    for page in pdf_reader.pages:
-        if page.extract_text():
-            text += page.extract_text()
+    if st.session_state.vector_store is None:
+        with st.spinner("📑 Processing PDF... Please wait."):
+            # Extract text from PDF
+            pdf_reader = PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                if page.extract_text():
+                    text += page.extract_text()
 
-    # Split text into chunks
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, chunk_overlap=150, length_function=len
-    )
-    chunks = text_splitter.split_text(text)
+            # Split text
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000, chunk_overlap=150, length_function=len
+            )
+            chunks = text_splitter.split_text(text)
 
-    # Embeddings (Gemini → fallback HuggingFace)
-    try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        _ = embeddings.embed_query("test")  # test call
-    except Exception:
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+            # Embeddings (Gemini → fallback HuggingFace)
+            try:
+                embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+                _ = embeddings.embed_query("test")  # test call
+            except Exception:
+                embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-    # Store embeddings in FAISS
-    vector_store = FAISS.from_texts(chunks, embeddings)
+            # Store embeddings in FAISS
+            st.session_state.vector_store = FAISS.from_texts(chunks, embeddings)
 
-    # User question
-    st.subheader("Ask a question about your PDF:")
+        st.success("✅ PDF Processed Successfully!")
+
+    # Question input
+    st.subheader("💬 Ask a Question")
     user_question = st.text_input("Type your question here...")
 
     if user_question:
-        # Search relevant chunks
-        docs = vector_store.similarity_search(user_question, k=3)
+        with st.spinner("🤔 Thinking..."):
+            docs = st.session_state.vector_store.similarity_search(user_question, k=3)
 
-        # LLM for answering
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-        chain = load_qa_chain(llm, chain_type="stuff")
+            # LLM
+            llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+            chain = load_qa_chain(llm, chain_type="stuff")
 
-        # Response
-        response = chain.run(input_documents=docs, question=user_question)
+            response = chain.run(input_documents=docs, question=user_question)
 
         # Show answer
         st.markdown("### 🧠 Answer:")
-        st.write(response)
+        st.success(response)
 
 else:
-    st.info("👆 Please upload a PDF to start chatting.")
+    st.info("👆 Upload a PDF file to get started.")
